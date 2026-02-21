@@ -5,17 +5,19 @@ import AnnotationCard from "@/components/AnnotationCard";
 import CategoryGrid from "@/components/CategoryGrid";
 import SearchBar from "@/components/SearchBar";
 import FilterBar from "@/components/FilterBar";
-import { mockAnnotations, mockCategories } from "@/lib/mock-data";
+import { useAnnotationStore } from "@/lib/annotation-store";
+import { mockCategories } from "@/lib/mock-data";
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 
 const Index = () => {
+  const { annotations } = useAnnotationStore();
   const [activeView, setActiveView] = useState("home");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
 
   const filteredAnnotations = useMemo(() => {
-    let items = mockAnnotations;
+    let items = annotations;
     if (filter !== "all") {
       items = items.filter((a) => a.annotationType === filter);
     }
@@ -31,7 +33,7 @@ const Index = () => {
       );
     }
     return items;
-  }, [filter, search]);
+  }, [annotations, filter, search]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -115,7 +117,7 @@ const Index = () => {
                 </button>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {mockAnnotations.slice(0, 4).map((a, i) => (
+                {annotations.slice(0, 4).map((a, i) => (
                   <AnnotationCard key={a.id} annotation={a} index={i} />
                 ))}
               </div>
