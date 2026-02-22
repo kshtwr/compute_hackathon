@@ -29,7 +29,7 @@ export const mockAnnotations: Annotation[] = [
     highlightedText: "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder.",
     color: "yellow",
     timestamp: "2026-02-21T10:30:00Z",
-    aiCategory: "Machine Learning",
+    aiCategory: "",
     aiTags: ["transformers", "deep-learning", "NLP"],
   },
   {
@@ -116,6 +116,32 @@ export const mockAnnotations: Annotation[] = [
     timestamp: "2026-02-18T13:10:00Z",
     aiCategory: "Design Systems",
     aiTags: ["tokens", "accessibility", "UI"],
+  },
+  // No category: AI will assign (match existing if ≥75% confident, else new category).
+  {
+    id: "9",
+    websiteUrl: "https://example.com/quantum-basics",
+    pageTitle: "Introduction to Quantum Computing",
+    favicon: "https://example.com/favicon.ico",
+    annotationType: "highlight",
+    highlightedText: "Qubits can exist in superposition, enabling parallel computation across many states.",
+    color: "blue",
+    timestamp: "2026-02-18T12:00:00Z",
+    aiCategory: "",
+    aiTags: [],
+  },
+  // Deliberately random: should trigger a new category (e.g. Competitive Snail Racing / Niche Hobbies).
+  {
+    id: "10",
+    websiteUrl: "https://oddities.org/snail-racing",
+    pageTitle: "World Championship Snail Racing: Rules and Tactics",
+    favicon: "https://oddities.org/favicon.ico",
+    annotationType: "sticky-note",
+    stickyNoteContent: "The key is humidity and lettuce placement. Never use turbo snails in amateur leagues.",
+    color: "pink",
+    timestamp: "2026-02-17T09:00:00Z",
+    aiCategory: "",
+    aiTags: [],
   },
 ];
 

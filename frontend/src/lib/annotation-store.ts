@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCategoryForAnnotation } from "@/lib/category-api";
 import type { Annotation } from "@/lib/mock-data";
 import { mockAnnotations } from "@/lib/mock-data";
 
@@ -42,13 +43,33 @@ export function subscribe(callback: () => void): () => void {
   return () => listeners.delete(callback);
 }
 
-export function addAnnotation(
+/** If aiCategory is missing or empty, AI classifies it (match existing ≥75% or new category). */
+export async function addAnnotation(
   data: Omit<Annotation, "id" | "timestamp">
-): Annotation {
+): Promise<Annotation> {
+  let resolved = { ...data };
+  if (!data.aiCategory?.trim()) {
+    const existingNames = [
+      ...new Set(annotations.map((a) => a.aiCategory).filter(Boolean)),
+    ];
+    try {
+      const result = await getCategoryForAnnotation(
+        {
+          pageTitle: data.pageTitle,
+          highlightedText: data.highlightedText,
+          stickyNoteContent: data.stickyNoteContent,
+        },
+        existingNames
+      );
+      resolved = { ...data, aiCategory: result.category };
+    } catch {
+      resolved = { ...data, aiCategory: "Uncategorized" };
+    }
+  }
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
   const annotation: Annotation = {
-    ...data,
+    ...resolved,
     id,
     timestamp,
   };
@@ -77,22 +98,50 @@ export function deleteAnnotation(id: string): void {
   notify();
 }
 
+/** Fills in aiCategory for an annotation that has none (AI match or new category). */
+export async function ensureAnnotationCategory(id: string): Promise<void> {
+  const annotation = annotations.find((a) => a.id === id);
+  if (!annotation || annotation.aiCategory?.trim()) return;
+  const existingNames = [
+    ...new Set(
+      annotations.filter((a) => a.id !== id).map((a) => a.aiCategory).filter(Boolean)
+    ),
+  ];
+  try {
+    const result = await getCategoryForAnnotation(
+      {
+        pageTitle: annotation.pageTitle,
+        highlightedText: annotation.highlightedText,
+        stickyNoteContent: annotation.stickyNoteContent,
+      },
+      existingNames
+    );
+    updateAnnotation(id, { aiCategory: result.category });
+  } catch {
+    updateAnnotation(id, { aiCategory: "Uncategorized" });
+  }
+}
+
 export type AnnotationStore = {
   annotations: Annotation[];
   addAnnotation: typeof addAnnotation;
   updateAnnotation: typeof updateAnnotation;
   deleteAnnotation: typeof deleteAnnotation;
+  ensureAnnotationCategory: typeof ensureAnnotationCategory;
 };
 
 export function useAnnotationStore(): AnnotationStore {
-  const [, setTick] = useState(0);
+  const [annotationsState, setAnnotationsState] = useState<Annotation[]>(() =>
+    getAnnotations()
+  );
   useEffect(() => {
-    return subscribe(() => setTick((n) => n + 1));
+    return subscribe(() => setAnnotationsState(getAnnotations()));
   }, []);
   return {
-    annotations: getAnnotations(),
+    annotations: annotationsState,
     addAnnotation,
     updateAnnotation,
     deleteAnnotation,
+    ensureAnnotationCategory,
   };
 }

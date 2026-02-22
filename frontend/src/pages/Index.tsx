@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import AppSidebar from "@/components/AppSidebar";
 import StatsCards from "@/components/StatsCards";
 import AnnotationCard from "@/components/AnnotationCard";
@@ -6,15 +6,82 @@ import CategoryGrid from "@/components/CategoryGrid";
 import SearchBar from "@/components/SearchBar";
 import FilterBar from "@/components/FilterBar";
 import { useAnnotationStore } from "@/lib/annotation-store";
-import { mockCategories } from "@/lib/mock-data";
+import { deriveCategoriesFromAnnotations } from "@/lib/categories";
+import { buildInsightPayload, getFallbackInsight } from "@/lib/insight-schema";
+import { fetchInsight } from "@/lib/insight-api";
 import { motion } from "framer-motion";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
+
+/** Renders text with **segments** as <strong>. */
+function InsightText({ text }: { text: string }) {
+  const parts = text.split(/\*\*(.*?)\*\*/g);
+  return (
+    <>
+      {parts.map((p, i) => (i % 2 === 1 ? <strong key={i} className="text-foreground">{p}</strong> : p))}
+    </>
+  );
+}
 
 const Index = () => {
-  const { annotations } = useAnnotationStore();
+  const { annotations, ensureAnnotationCategory } = useAnnotationStore();
   const [activeView, setActiveView] = useState("home");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [insightText, setInsightText] = useState<string | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState<string | null>(null);
+  const [insightFallback, setInsightFallback] = useState(false);
+
+  useEffect(() => {
+    if (activeView !== "home" || annotations.length === 0) {
+      setInsightText(null);
+      setInsightError(null);
+      setInsightFallback(false);
+      return;
+    }
+    let cancelled = false;
+    setInsightLoading(true);
+    setInsightError(null);
+    setInsightFallback(false);
+    const payload = buildInsightPayload(annotations);
+    fetchInsight(payload)
+      .then(({ text }) => {
+        if (!cancelled) setInsightText(text);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          const fallback = getFallbackInsight(annotations);
+          if (fallback) {
+            setInsightText(fallback);
+            setInsightFallback(true);
+          } else {
+            setInsightError(err instanceof Error ? err.message : String(err));
+          }
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setInsightLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, annotations]);
+
+  // Backfill AI category for any annotation that has none (match existing ≥75% or new category).
+  useEffect(() => {
+    const withoutCategory = annotations.filter((a) => !a.aiCategory?.trim());
+    if (withoutCategory.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const a of withoutCategory) {
+        if (cancelled) break;
+        await ensureAnnotationCategory(a.id);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [annotations, ensureAnnotationCategory]);
 
   const filteredAnnotations = useMemo(() => {
     let items = annotations;
@@ -34,6 +101,11 @@ const Index = () => {
     }
     return items;
   }, [annotations, filter, search]);
+
+  const categories = useMemo(
+    () => deriveCategoriesFromAnnotations(annotations),
+    [annotations]
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -73,14 +145,33 @@ const Index = () => {
               className="bg-primary/5 border border-primary/10 rounded-xl p-5 flex items-start gap-4"
             >
               <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5 text-accent" />
+                {insightLoading ? (
+                  <Loader2 className="w-5 h-5 text-accent animate-spin" />
+                ) : (
+                  <Sparkles className="w-5 h-5 text-accent" />
+                )}
               </div>
-              <div>
+              <div className="min-w-0 flex-1">
                 <h3 className="font-display text-sm font-semibold text-foreground mb-1">AI Insight</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  You've been deeply exploring <strong className="text-foreground">Machine Learning</strong> and{" "}
-                  <strong className="text-foreground">Cognitive Science</strong> this week. Your annotations suggest an interest in how AI architectures mirror biological neural structures. Consider exploring neuromorphic computing next.
-                </p>
+                {insightLoading && (
+                  <p className="text-sm text-muted-foreground">Thinking about your annotations…</p>
+                )}
+                {insightError && (
+                  <p className="text-sm text-destructive">{insightError}</p>
+                )}
+                {!insightLoading && !insightError && annotations.length === 0 && (
+                  <p className="text-sm text-muted-foreground">Add annotations to get a personalized insight.</p>
+                )}
+                {!insightLoading && !insightError && insightText && annotations.length > 0 && (
+                  <>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      <InsightText text={insightText} />
+                    </p>
+                    {insightFallback && (
+                      <p className="text-xs text-muted-foreground/80 mt-2">Summary from your annotations (AI unavailable).</p>
+                    )}
+                  </>
+                )}
               </div>
             </motion.div>
 
@@ -88,7 +179,7 @@ const Index = () => {
             <div>
               <h2 className="font-display text-xl font-semibold text-foreground mb-4">Top Categories</h2>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                {mockCategories.slice(0, 4).map((cat, i) => (
+                {categories.slice(0, 4).map((cat, i) => (
                   <motion.div
                     key={cat.name}
                     initial={{ opacity: 0, y: 8 }}
@@ -149,7 +240,7 @@ const Index = () => {
 
         {/* Categories View */}
         {activeView === "categories" && (
-          <CategoryGrid />
+          <CategoryGrid categories={categories} />
         )}
 
         {/* Search View */}
