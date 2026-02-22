@@ -1,37 +1,77 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
 import { getCategoryForAnnotation } from "@/lib/category-api";
 import type { Annotation } from "@/lib/mock-data";
-import { mockAnnotations } from "@/lib/mock-data";
+import { supabase } from "./supabase";
 
-const STORAGE_KEY = "annotations";
+const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
 
-function loadAnnotations(): Annotation[] {
-  if (typeof window === "undefined") return [...mockAnnotations];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [...mockAnnotations];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [...mockAnnotations];
-    return parsed as Annotation[];
-  } catch {
-    return [...mockAnnotations];
-  }
-}
-
-function saveAnnotations(items: Annotation[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  } catch {
-    // ignore quota or other storage errors
-  }
-}
-
-let annotations: Annotation[] = loadAnnotations();
+let annotations: Annotation[] = [];
+let isLoaded = false;
 const listeners = new Set<() => void>();
 
 function notify(): void {
   listeners.forEach((cb) => cb());
+}
+
+// Map from DB format to Frontend format
+function mapToFrontend(row: any): Annotation {
+  // Extract a quick favicon approximation from the URL origin
+  let faviconUrl = "";
+  try {
+    const urlObj = new URL(row.website_url);
+    faviconUrl = `${urlObj.origin}/favicon.ico`;
+  } catch (e) {
+    // leave empty if invalid URL
+  }
+
+  return {
+    id: row.id,
+    websiteUrl: row.website_url,
+    pageTitle: row.page_title,
+    favicon: faviconUrl,
+    annotationType: row.annotation_type,
+    highlightedText: row.highlighted_text,
+    stickyNoteContent: row.sticky_note_content,
+    color: row.color || 'yellow',
+    timestamp: row.timestamp,
+    aiCategory: row.ai_category || "",
+    aiTags: row.ai_tags || [],
+  };
+}
+
+// Map from Frontend format to DB format
+function mapToDB(a: Annotation): any {
+  return {
+    id: a.id,
+    user_id: MOCK_USER_ID,
+    website_url: a.websiteUrl,
+    page_title: a.pageTitle,
+    annotation_type: a.annotationType,
+    highlighted_text: a.highlightedText || null,
+    sticky_note_content: a.stickyNoteContent || null,
+    color: a.color,
+    timestamp: a.timestamp,
+    ai_category: a.aiCategory,
+    ai_tags: a.aiTags,
+  };
+}
+
+export async function fetchAnnotations() {
+  const { data, error } = await supabase
+    .from('annotations')
+    .select('*')
+    .eq('user_id', MOCK_USER_ID)
+    .order('timestamp', { ascending: false });
+
+  if (error) {
+    console.error("Error fetching annotations:", error);
+    return;
+  }
+
+  annotations = data.map(mapToFrontend);
+  isLoaded = true;
+  notify();
 }
 
 export function getAnnotations(): Annotation[] {
@@ -43,7 +83,6 @@ export function subscribe(callback: () => void): () => void {
   return () => listeners.delete(callback);
 }
 
-/** If aiCategory is missing or empty, AI classifies it (match existing ≥75% or new category). */
 export async function addAnnotation(
   data: Omit<Annotation, "id" | "timestamp">
 ): Promise<Annotation> {
@@ -66,6 +105,7 @@ export async function addAnnotation(
       resolved = { ...data, aiCategory: "Uncategorized" };
     }
   }
+
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
   const annotation: Annotation = {
@@ -73,32 +113,56 @@ export async function addAnnotation(
     id,
     timestamp,
   };
+
+  // Optimistic UI update
   annotations = [annotation, ...annotations];
-  saveAnnotations(annotations);
   notify();
+
+  // Persist to DB
+  await supabase.from('annotations').insert([mapToDB(annotation)]);
+
   return annotation;
 }
 
-export function updateAnnotation(
+export async function updateAnnotation(
   id: string,
   patch: Partial<Omit<Annotation, "id">>
-): void {
+): Promise<void> {
   const index = annotations.findIndex((a) => a.id === id);
   if (index === -1) return;
+
+  const updatedAnnotation = { ...annotations[index], ...patch };
+
+  // Optimistic UI update
   annotations = annotations.map((a) =>
-    a.id === id ? { ...a, ...patch } : a
+    a.id === id ? updatedAnnotation : a
   );
-  saveAnnotations(annotations);
   notify();
+
+  // Create patch for DB
+  const dbPatch: any = {};
+  if (patch.websiteUrl !== undefined) dbPatch.website_url = patch.websiteUrl;
+  if (patch.pageTitle !== undefined) dbPatch.page_title = patch.pageTitle;
+  if (patch.annotationType !== undefined) dbPatch.annotation_type = patch.annotationType;
+  if (patch.highlightedText !== undefined) dbPatch.highlighted_text = patch.highlightedText;
+  if (patch.stickyNoteContent !== undefined) dbPatch.sticky_note_content = patch.stickyNoteContent;
+  if (patch.color !== undefined) dbPatch.color = patch.color;
+  if (patch.aiCategory !== undefined) dbPatch.ai_category = patch.aiCategory;
+  if (patch.aiTags !== undefined) dbPatch.ai_tags = patch.aiTags;
+
+  // Persist to DB
+  await supabase.from('annotations').update(dbPatch).eq('id', id);
 }
 
-export function deleteAnnotation(id: string): void {
+export async function deleteAnnotation(id: string): Promise<void> {
+  // Optimistic UI update
   annotations = annotations.filter((a) => a.id !== id);
-  saveAnnotations(annotations);
   notify();
+
+  // Persist to DB
+  await supabase.from('annotations').delete().eq('id', id);
 }
 
-/** Fills in aiCategory for an annotation that has none (AI match or new category). */
 export async function ensureAnnotationCategory(id: string): Promise<void> {
   const annotation = annotations.find((a) => a.id === id);
   if (!annotation || annotation.aiCategory?.trim()) return;
@@ -116,9 +180,9 @@ export async function ensureAnnotationCategory(id: string): Promise<void> {
       },
       existingNames
     );
-    updateAnnotation(id, { aiCategory: result.category });
+    await updateAnnotation(id, { aiCategory: result.category });
   } catch {
-    updateAnnotation(id, { aiCategory: "Uncategorized" });
+    await updateAnnotation(id, { aiCategory: "Uncategorized" });
   }
 }
 
@@ -128,20 +192,27 @@ export type AnnotationStore = {
   updateAnnotation: typeof updateAnnotation;
   deleteAnnotation: typeof deleteAnnotation;
   ensureAnnotationCategory: typeof ensureAnnotationCategory;
+  refreshAnnotations: () => void;
 };
 
 export function useAnnotationStore(): AnnotationStore {
   const [annotationsState, setAnnotationsState] = useState<Annotation[]>(() =>
     getAnnotations()
   );
+
   useEffect(() => {
+    if (!isLoaded) {
+      fetchAnnotations();
+    }
     return subscribe(() => setAnnotationsState(getAnnotations()));
   }, []);
+
   return {
     annotations: annotationsState,
     addAnnotation,
     updateAnnotation,
     deleteAnnotation,
     ensureAnnotationCategory,
+    refreshAnnotations: fetchAnnotations
   };
 }

@@ -1,14 +1,25 @@
 import { motion } from "framer-motion";
 import { BookOpen, Highlighter, StickyNote, Sparkles } from "lucide-react";
-
-const stats = [
-  { label: "Total Annotations", value: "47", icon: BookOpen, change: "+5 this week" },
-  { label: "Highlights", value: "31", icon: Highlighter, change: "66% of total" },
-  { label: "Sticky Notes", value: "16", icon: StickyNote, change: "34% of total" },
-  { label: "AI Categories", value: "7", icon: Sparkles, change: "Auto-organized" },
-];
+import { useAnnotationStore } from "@/lib/annotation-store";
 
 const StatsCards = () => {
+  const { annotations } = useAnnotationStore();
+  
+  const total = annotations.length;
+  const highlights = annotations.filter(a => a.annotationType === 'highlight').length;
+  const stickyNotes = annotations.filter(a => a.annotationType === 'sticky-note').length;
+  const aiCategories = new Set(annotations.map(a => a.aiCategory).filter(Boolean)).size;
+
+  const highlightsPercent = total === 0 ? "0%" : `${Math.round((highlights / total) * 100)}% of total`;
+  const stickyNotesPercent = total === 0 ? "0%" : `${Math.round((stickyNotes / total) * 100)}% of total`;
+
+  const stats = [
+    { label: "Total Annotations", value: total.toString(), icon: BookOpen, change: "All time" },
+    { label: "Highlights", value: highlights.toString(), icon: Highlighter, change: highlightsPercent },
+    { label: "Sticky Notes", value: stickyNotes.toString(), icon: StickyNote, change: stickyNotesPercent },
+    { label: "AI Categories", value: aiCategories.toString(), icon: Sparkles, change: "Auto-organized" },
+  ];
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {stats.map((stat, i) => {
