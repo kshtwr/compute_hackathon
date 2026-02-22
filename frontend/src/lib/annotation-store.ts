@@ -8,6 +8,8 @@ const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 let annotations: Annotation[] = [];
 let isLoaded = false;
+let isFetching = false;
+let syncPromise = Promise.resolve();
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -57,7 +59,46 @@ function mapToDB(a: Annotation): any {
   };
 }
 
+// Force all database syncing to execute sequentially to prevent race conditions
+function syncCategoriesToDB(currentAnnotations: Annotation[]) {
+  syncPromise = syncPromise.then(async () => {
+    const categoryCounts = new Map<string, number>();
+    for (const a of currentAnnotations) {
+      const name = a.aiCategory?.trim() || "Uncategorized";
+      categoryCounts.set(name, (categoryCounts.get(name) || 0) + 1);
+    }
+
+    const { data: existing } = await supabase.from('categories').select('*').eq('user_id', MOCK_USER_ID);
+    const existingMap = new Map((existing || []).map((c: any) => [c.name, c]));
+
+    for (const [name, count] of categoryCounts.entries()) {
+      if (existingMap.has(name)) {
+        const cat = existingMap.get(name);
+        if (cat.annotation_count !== count) {
+          await supabase.from('categories').update({ annotation_count: count }).eq('id', cat.id);
+        }
+        existingMap.delete(name);
+      } else {
+        await supabase.from('categories').insert([{
+          id: crypto.randomUUID(),
+          user_id: MOCK_USER_ID,
+          name: name,
+          description: "",
+          annotation_count: count
+        }]);
+      }
+    }
+
+    for (const cat of existingMap.values()) {
+      await supabase.from('categories').delete().eq('id', cat.id);
+    }
+  }).catch(console.error);
+}
+
 export async function fetchAnnotations() {
+  if (isLoaded || isFetching) return;
+  isFetching = true;
+
   const { data, error } = await supabase
     .from('annotations')
     .select('*')
@@ -66,12 +107,15 @@ export async function fetchAnnotations() {
 
   if (error) {
     console.error("Error fetching annotations:", error);
+    isFetching = false;
     return;
   }
 
   annotations = data.map(mapToFrontend);
   isLoaded = true;
+  isFetching = false;
   notify();
+  syncCategoriesToDB(annotations);
 }
 
 export function getAnnotations(): Annotation[] {
@@ -120,6 +164,7 @@ export async function addAnnotation(
 
   // Persist to DB
   await supabase.from('annotations').insert([mapToDB(annotation)]);
+  syncCategoriesToDB(annotations);
 
   return annotation;
 }
@@ -152,6 +197,7 @@ export async function updateAnnotation(
 
   // Persist to DB
   await supabase.from('annotations').update(dbPatch).eq('id', id);
+  syncCategoriesToDB(annotations);
 }
 
 export async function deleteAnnotation(id: string): Promise<void> {
@@ -161,6 +207,7 @@ export async function deleteAnnotation(id: string): Promise<void> {
 
   // Persist to DB
   await supabase.from('annotations').delete().eq('id', id);
+  syncCategoriesToDB(annotations);
 }
 
 export async function ensureAnnotationCategory(id: string): Promise<void> {
