@@ -1,12 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
 import { getCategoryForAnnotation } from "@/lib/category-api";
-import type { Annotation } from "@/lib/mock-data";
+import { getIconAndColor } from "@/lib/categories";
+import type { Annotation, Category } from "@/lib/mock-data";
 import { supabase } from "./supabase";
 
 const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 let annotations: Annotation[] = [];
+let dbCategories: Category[] = [];
 let isLoaded = false;
 let isFetching = false;
 let syncPromise = Promise.resolve();
@@ -91,6 +93,17 @@ function syncCategoriesToDB(currentAnnotations: Annotation[]) {
 
     for (const cat of existingMap.values()) {
       await supabase.from('categories').delete().eq('id', cat.id);
+    }
+
+    // Refresh the local cache of categories after syncing
+    const { data: updatedCategories } = await supabase.from('categories').select('*').eq('user_id', MOCK_USER_ID).order('annotation_count', { ascending: false });
+    if (updatedCategories) {
+      dbCategories = updatedCategories.map((c: any) => ({
+        name: c.name,
+        count: c.annotation_count,
+        ...getIconAndColor(c.name)
+      }));
+      notify();
     }
   }).catch(console.error);
 }
@@ -239,27 +252,32 @@ export type AnnotationStore = {
   updateAnnotation: typeof updateAnnotation;
   deleteAnnotation: typeof deleteAnnotation;
   ensureAnnotationCategory: typeof ensureAnnotationCategory;
-  refreshAnnotations: () => void;
 };
 
-export function useAnnotationStore(): AnnotationStore {
-  const [annotationsState, setAnnotationsState] = useState<Annotation[]>(() =>
-    getAnnotations()
-  );
+export function useAnnotationStore() {
+  const [data, setData] = useState(annotations);
+  const [cats, setCats] = useState(dbCategories);
 
   useEffect(() => {
-    if (!isLoaded) {
+    if (!isLoaded && !isFetching) {
       fetchAnnotations();
     }
-    return subscribe(() => setAnnotationsState(getAnnotations()));
+    const update = () => {
+      setData([...annotations]);
+      setCats([...dbCategories]);
+    };
+    listeners.add(update);
+    return () => {
+      listeners.delete(update);
+    };
   }, []);
 
   return {
-    annotations: annotationsState,
+    annotations: data,
+    categories: cats,
     addAnnotation,
     updateAnnotation,
     deleteAnnotation,
     ensureAnnotationCategory,
-    refreshAnnotations: fetchAnnotations
   };
 }

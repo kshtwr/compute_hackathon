@@ -6,7 +6,6 @@ import CategoryGrid from "@/components/CategoryGrid";
 import SearchBar from "@/components/SearchBar";
 import FilterBar from "@/components/FilterBar";
 import { useAnnotationStore } from "@/lib/annotation-store";
-import { deriveCategoriesFromAnnotations } from "@/lib/categories";
 import { buildInsightPayload, getFallbackInsight } from "@/lib/insight-schema";
 import { fetchInsight } from "@/lib/insight-api";
 import { motion } from "framer-motion";
@@ -23,7 +22,7 @@ function InsightText({ text }: { text: string }) {
 }
 
 const Index = () => {
-  const { annotations, ensureAnnotationCategory } = useAnnotationStore();
+  const { annotations, categories, ensureAnnotationCategory } = useAnnotationStore();
   const [activeView, setActiveView] = useState("home");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -101,11 +100,6 @@ const Index = () => {
     }
     return items;
   }, [annotations, filter, search]);
-
-  const categories = useMemo(
-    () => deriveCategoriesFromAnnotations(annotations),
-    [annotations]
-  );
 
   return (
     <div className="min-h-screen bg-background">

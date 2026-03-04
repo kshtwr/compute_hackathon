@@ -19,7 +19,7 @@ function hash(s: string): number {
   return Math.abs(h);
 }
 
-function getIconAndColor(name: string): { icon: string; color: string } {
+export function getIconAndColor(name: string): { icon: string; color: string } {
   const preset = PRESET[name];
   if (preset) return preset;
   const n = hash(name);
